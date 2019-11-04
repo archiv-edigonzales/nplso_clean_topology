@@ -53,9 +53,144 @@ WITH overlaps_to_gaps AS (
         ) AS geometrie
     FROM 
         etziken.nutzungsplanung_grundnutzung AS grundnutzung_2
+),
+grundnutzung_multipolygon_gaps AS (
+    SELECT
+        geometrie
+    FROM (
+        SELECT
+            ST_Union(geometrie) AS geometrie
+        FROM
+            overlaps_to_gaps
+        ) AS query
+),
+perimetergeometrie AS (
+    SELECT
+        ST_Union(geometrie) AS geometrie
+    FROM
+        (
+            SELECT
+                ST_MakePolygon(ST_ExteriorRing(subquery.geometrie)) AS geometrie,
+                1 AS id
+            FROM
+                (
+                    SELECT
+                        (ST_Dump(ST_Union(geometrie))).geom AS geometrie
+                    FROM 
+                        etziken.nutzungsplanung_grundnutzung
+                ) AS subquery
+            GROUP BY
+                id,
+                subquery.geometrie
+        ) AS query
+),
+gaps AS (
+    SELECT
+        geometrie,
+        ROW_NUMBER() OVER() AS id
+    FROM (
+        SELECT DISTINCT
+            (ST_Dump(differenz.differenz_geometrie)).geom AS geometrie
+        FROM 
+            perimetergeometrie, (
+                SELECT DISTINCT
+                    ST_Difference(perimetergeometrie.geometrie, grundnutzung_multipolygon_gaps.geometrie) AS differenz_geometrie
+                FROM 
+                    perimetergeometrie,
+                    grundnutzung_multipolygon_gaps
+            ) AS differenz
+        ) AS query
+),
+flaechenmass_grundnutzung AS (
+    SELECT
+        t_ili_tid,
+        geometrie,
+        ST_Area(geometrie) AS flaechemass
+    FROM
+        overlaps_to_gaps
+),
+area AS (
+    SELECT DISTINCT
+        ST_Intersects(gaps.geometrie, flaechenmass_grundnutzung.geometrie),
+        t_ili_tid,
+        flaechemass,
+        gaps.geometrie,
+        gaps.id
+    FROM
+        flaechenmass_grundnutzung,
+        gaps
+    WHERE
+        ST_Intersects(gaps.geometrie, flaechenmass_grundnutzung.geometrie) = True
+),
+zugehoerigkeit AS (
+    SELECT DISTINCT
+        CASE
+            WHEN area_a.flaechemass > area_b.flaechemass
+                THEN area_a.t_ili_tid
+            WHEN area_a.flaechemass < area_b.flaechemass
+                THEN area_b.t_ili_tid
+            WHEN area_a.flaechemass = area_b.flaechemass
+                THEN area_a.t_ili_tid
+        END AS groesser,
+        area_a.geometrie
+    FROM
+        area AS area_a,
+        area AS area_b
+    WHERE 
+        area_a.id = area_b.id
+        AND 
+        area_a.t_ili_tid <> area_b.t_ili_tid
+),
+gaps_multipolygon AS (
+    SELECT DISTINCT
+        ST_Collect(geometrie) AS geometrie,
+        groesser AS t_ili_tid
+    FROM 
+        zugehoerigkeit
+    GROUP BY
+        groesser
+),
+corrected_polygons AS (
+    SELECT
+        overlaps_to_gaps.t_ili_tid,
+        ST_Union(gaps_multipolygon.geometrie, overlaps_to_gaps.geometrie) as geometrie
+    FROM 
+        gaps_multipolygon,
+        overlaps_to_gaps
+    WHERE 
+        gaps_multipolygon.t_ili_tid = overlaps_to_gaps.t_ili_tid
 )
-SELECT 
-    *
+SELECT
+    orig.t_id,
+    orig.t_ili_tid,
+    geometry.geometrie
 FROM
-    overlaps_to_gaps
+(
+    SELECT
+        t_ili_tid,
+        ST_Multi(ST_Union(geometrie)) AS geometrie
+    FROM
+        overlaps_to_gaps
+    WHERE
+        t_ili_tid NOT IN (
+            SELECT
+                t_ili_tid
+            FROM
+                corrected_polygons)
+    GROUP BY
+        t_ili_tid
+    
+    UNION
+    
+    SELECT
+        t_ili_tid AS gemeindename,
+        ST_Multi(ST_Union(geometrie)) AS geometrie
+    FROM
+        corrected_polygons
+    GROUP BY
+        t_ili_tid
+) AS geometry
+LEFT JOIN etziken.nutzungsplanung_grundnutzung AS orig
+ON orig.t_ili_tid = geometry.t_ili_tid
+;
 ```
