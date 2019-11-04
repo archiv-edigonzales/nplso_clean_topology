@@ -22,23 +22,27 @@ see: https://github.com/sogis/gretljobs/blob/master/agi_hoheitsgrenzen_pub/agi_h
 ```
 WITH overlaps_to_gaps AS (
     SELECT
-        gem_bfs,
+        t_ili_tid,
         COALESCE(
             ST_Difference(geometrie,
                 (
                     SELECT 
-                        ST_Union(gemeindegrenzen_1.geometrie)
+                        ST_Union(grundnutzung_1.geometrie)
                     FROM 
-                        av_avdpool_ng.gemeindegrenzen_gemeindegrenze AS gemeindegrenzen_1
+                        etziken.nutzungsplanung_grundnutzung AS grundnutzung_1
                     WHERE 
-                        ST_Intersects(gemeindegrenzen_2.geometrie, gemeindegrenzen_1.geometrie)
+                        ST_Intersects(grundnutzung_2.geometrie, grundnutzung_1.geometrie)
                         AND 
-                        gemeindegrenzen_2.gem_bfs != gemeindegrenzen_1.gem_bfs
+                        grundnutzung_2.t_ili_tid != grundnutzung_1.t_ili_tid
                 )
             ),
-            gemeindegrenzen_2.geometrie
+            grundnutzung_2.geometrie
         ) AS geometrie
     FROM 
         etziken.nutzungsplanung_grundnutzung AS grundnutzung_2
-),
+)
+SELECT 
+    *
+FROM
+    overlaps_to_gaps
 ```
